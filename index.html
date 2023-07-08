@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>Soft Cloth Simulator</title>
+
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <script src="https://cdn.babylonjs.com/havok/HavokPhysics_umd.js"></script>
+    <script src="https://preview.babylonjs.com/proceduralTexturesLibrary/babylonjs.proceduralTextures.min.js"></script>
+
+    <style>
+        html,
+        body {
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+
+        #renderCanvas {
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+    </style>
+</head>
+
+<body>
+    <canvas id="renderCanvas"></canvas>
+
+    <script>
+        let canvas = document.getElementById("renderCanvas");
+
+        // 20.06.23 CodingCrusader - Fibonacci Sphere, Surface Reconstruction with Physics, Material Study
+
+        function getFibonacciSpherePoints(samples, radius, randomize) {
+            samples = samples || 1;
+            radius = radius || 1;
+            randomize = randomize || true;
+            var random = 1;
+            if (randomize === true) {
+                random = Math.random() * samples;
+            }
+
+            var points = []
+            var offset = 2 / samples
+            var increment = Math.PI * (3 - Math.sqrt(5));
+
+            for (var i = 0; i < samples; i++) {
+                var y = ((i * offset) - 1) + (offset / 2);
+                var distance = Math.sqrt(1 - Math.pow(y, 2));
+                var phi = ((i + random) % samples) * increment;
+                var x = Math.cos(phi) * distance;
+                var z = Math.sin(phi) * distance;
+                x = x * radius;
+                y = y * radius;
+                z = z * radius;
+                var point = {
+                    'x': x,
+                    'y': y,
+                    'z': z
+                }
+                points.push(point);
+            }
+            return points;
+        }
+
+
+        const createScene = async function () {
+            var scene = new BABYLON.Scene(engine);
+
+            const havokInstance = await HavokPhysics();
+            const hk = new BABYLON.HavokPlugin(true, havokInstance);
+            scene.enablePhysics(new BABYLON.Vector3(0, -9.8, 0), hk);
+
+            let max = 20
+            scene.createDefaultCameraOrLight(true, true, true);
+            scene.activeCamera.radius = max * 10;
+            scene.activeCamera.beta = Math.PI * 0.5;
+
+            let spheres = [];
+            for (let x = -max; x <= max; x++) {
+                spheres[x] = [];
+
+                for (let y = -max; y <= max; y++) {
+                    let mass = y == max && x == max || y == max && x == -max ? 0 : 1;
+
+                    let sphere = BABYLON.Mesh.CreateSphere("distanceSphere1", 1, 1, scene);
+                    // sphere.position.set(x, y, 0); //  Math.random() * max * 0.1);
+                    sphere.position.set(x, 10, - 10 + y);
+                    sphere.isVisible = false;
+                    sphere.agg = new BABYLON.PhysicsAggregate(
+                        sphere,
+                        BABYLON.PhysicsShapeType.SPHERE,
+                        { mass: mass, restitution: 0.5 },
+                        scene
+                    );
+                    spheres[x][y] = sphere;
+                }
+            }
+
+            let distance = 1;
+
+            for (let x = -max; x <= max; x++) {
+                for (let y = -max; y <= max - 1; y++) {
+                    let sphere1 = spheres[x][y];
+                    let sphere2 = spheres[x][y + 1];
+
+                    let distanceJoint = new BABYLON.DistanceConstraint(distance, scene);
+                    sphere1.agg.body.addConstraint(sphere2.agg.body, distanceJoint);
+                }
+            }
+
+
+            for (let y = -max; y <= max; y++) {
+                for (let x = -max; x <= max - 1; x++) {
+                    let sphere1 = spheres[x][y];
+                    let sphere2 = spheres[x + 1][y];
+
+                    let distanceJoint = new BABYLON.DistanceConstraint(distance, scene);
+                    sphere1.agg.body.addConstraint(sphere2.agg.body, distanceJoint);
+                }
+            }
+
+
+
+
+            var numberOfPoints = Math.pow(3, 4);
+            var radiusOfSphere = 10;
+            var fibonacciSpherePoints = getFibonacciSpherePoints(numberOfPoints, radiusOfSphere);
+
+            for (var i = 0; i < fibonacciSpherePoints.length - 3; i++) {
+                var point = fibonacciSpherePoints[i];
+
+                var sphere = BABYLON.MeshBuilder.CreateSphere("", { diameter: 1 }, scene);
+                sphere.position.x = point.x;
+                sphere.position.y = point.y;
+                sphere.position.z = point.z;
+
+                sphere.agg = new BABYLON.PhysicsAggregate(
+                    sphere,
+                    BABYLON.PhysicsShapeType.SPHERE,
+                    { mass: 0, restitution: 0.5 },
+                    scene
+                );
+            }
+
+
+            var pbr = new BABYLON.PBRMaterial("pbr", scene);
+            pbr.backFaceCulling = false;
+            pbr.albedoColor = new BABYLON.Color3(1.0, 0.766, 0.336);
+            pbr.metallic = 1.0; // set to 1 to only use it from the metallicRoughnessTexture
+            pbr.roughness = 1.0; // set to 1 to only use it from the metallicRoughnessTexture
+            pbr.reflectionTexture = BABYLON.CubeTexture.CreateFromPrefilteredData("https://playground.babylonjs.com/textures/environment.dds", scene);
+            pbr.metallicTexture = new BABYLON.Texture("https://playground.babylonjs.com/textures/mr.jpg", scene);
+            pbr.useRoughnessFromMetallicTextureAlpha = false;
+            pbr.useRoughnessFromMetallicTextureGreen = true;
+            pbr.useMetallnessFromMetallicTextureBlue = true;
+            // pbr.alpha = 0.5;
+            // pbr.wireframe=true;
+
+
+            let ribbon = undefined;
+            const dir = new BABYLON.Vector3(-1, 0, 0);
+            scene.registerBeforeRender(function () {
+                let paths = [];
+                for (let x = -max; x <= max; x++) {
+                    let path = [];
+                    for (let y = -max; y <= max; y++) {
+                        let sphere = spheres[x][y];
+                        // sphere.agg.body.applyImpulse(dir.scale(0.3), new BABYLON.Vector3(0, 0, 0));
+
+                        path.push(new BABYLON.Vector3(spheres[x][y].position.x, spheres[x][y].position.y, spheres[x][y].position.z));
+                    }
+                    paths.push(path)
+                }
+
+
+                if (ribbon !== undefined) ribbon.dispose();
+                ribbon = BABYLON.Mesh.CreateRibbon("ribbon", paths, false, false, 0, scene, true, BABYLON.Mesh.DOUBLESIDE);
+                ribbon.material = pbr;
+            });
+
+            return scene;
+        };
+
+
+        let engine = new BABYLON.Engine(canvas, true, {
+            preserveDrawingBuffer: true,
+            stencil: true
+        });
+
+        createScene().then((scene) => {
+            engine.runRenderLoop(function () {
+                if (scene) {
+                    scene.render();
+                }
+            });
+        });
+
+
+
+        window.addEventListener("resize", function () {
+            engine.resize();
+        });
+    </script>
+
+</body>
+
+</html>
